@@ -1,0 +1,2745 @@
+{
+ "cells": [
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "metadata": {
+    "id": "xOkdn99PbuQD"
+   },
+   "outputs": [],
+   "source": [
+    "%matplotlib inline\n",
+    "import torch \n",
+    "import torch.autograd as autograd \n",
+    "import torch.nn as nn \n",
+    "import torch.nn.functional as F\n",
+    "import torch.optim as optim\n",
+    "import numpy as np\n",
+    "import pandas as pd"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 2,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# def proc_col(col, train_col=None):\n",
+    "#     \"\"\"Encodes a pandas column with continous ids. \n",
+    "#     \"\"\"\n",
+    "#     if train_col is not None:\n",
+    "#         uniq = train_col.unique()\n",
+    "#     else:\n",
+    "#         uniq = col.unique()\n",
+    "#     name2idx = {o:i for i,o in enumerate(uniq)}\n",
+    "#     return name2idx, np.array([name2idx.get(x, -1) for x in col]), len(uniq)\n",
+    "\n",
+    "# def encode_data(df, train=None):\n",
+    "#     \"\"\" Encodes rating data with continous user and movie ids. \n",
+    "#     If train is provided, encodes df with the same encoding as train.\n",
+    "#     \"\"\"\n",
+    "#     df = df.copy()\n",
+    "#     for col_name in [\"user_id\", \"item_id\"]:\n",
+    "#         train_col = None\n",
+    "#         if train is not None:\n",
+    "#             train_col = train[col_name]\n",
+    "#         _,col,_ = proc_col(df[col_name], train_col)\n",
+    "#         df[col_name] = col\n",
+    "#         df = df[df[col_name] >= 0]\n",
+    "#     return df"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "B0lHHO6rb6cE"
+   },
+   "source": [
+    "# Import Data"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 3,
+   "metadata": {
+    "id": "ubOfJH6bb1TT"
+   },
+   "outputs": [],
+   "source": [
+    "item_feature = pd.read_csv('data/item_feature.csv')\n",
+    "test_kaggle = pd.read_csv('data/test_kaggle.csv')\n",
+    "training = pd.read_csv('data/training.csv')\n",
+    "sample_submission = pd.read_csv('data/sample_submission.csv')"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 4,
+   "metadata": {
+    "colab": {
+     "base_uri": "https://localhost:8080/",
+     "height": 206
+    },
+    "id": "o6fG_OQpi-WQ",
+    "outputId": "deea560b-c871-42bf-ee43-c5c60c0e06de"
+   },
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "<div>\n",
+       "<style scoped>\n",
+       "    .dataframe tbody tr th:only-of-type {\n",
+       "        vertical-align: middle;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe tbody tr th {\n",
+       "        vertical-align: top;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe thead th {\n",
+       "        text-align: right;\n",
+       "    }\n",
+       "</style>\n",
+       "<table border=\"1\" class=\"dataframe\">\n",
+       "  <thead>\n",
+       "    <tr style=\"text-align: right;\">\n",
+       "      <th></th>\n",
+       "      <th>user_id</th>\n",
+       "      <th>item_id</th>\n",
+       "      <th>context_feature_id</th>\n",
+       "    </tr>\n",
+       "  </thead>\n",
+       "  <tbody>\n",
+       "    <tr>\n",
+       "      <th>0</th>\n",
+       "      <td>0</td>\n",
+       "      <td>28366</td>\n",
+       "      <td>2</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>1</th>\n",
+       "      <td>0</td>\n",
+       "      <td>16109</td>\n",
+       "      <td>2</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>2</th>\n",
+       "      <td>0</td>\n",
+       "      <td>11500</td>\n",
+       "      <td>3</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>3</th>\n",
+       "      <td>0</td>\n",
+       "      <td>20750</td>\n",
+       "      <td>2</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>4</th>\n",
+       "      <td>0</td>\n",
+       "      <td>8759</td>\n",
+       "      <td>2</td>\n",
+       "    </tr>\n",
+       "  </tbody>\n",
+       "</table>\n",
+       "</div>"
+      ],
+      "text/plain": [
+       "   user_id  item_id  context_feature_id\n",
+       "0        0    28366                   2\n",
+       "1        0    16109                   2\n",
+       "2        0    11500                   3\n",
+       "3        0    20750                   2\n",
+       "4        0     8759                   2"
+      ]
+     },
+     "execution_count": 4,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "training.head()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# Data Preparation: Implicit Ratings to training data"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 5,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "training.drop(columns=['context_feature_id'], inplace=True)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 6,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "from collections import defaultdict\n",
+    "positive_item_dict = defaultdict(set)\n",
+    "user_items_list = [tuple(x) for x in training[['user_id', 'item_id']].to_numpy()]\n",
+    "for key, val in user_items_list:\n",
+    "    positive_item_dict[key].add(val)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 7,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "{2714, 10126, 12225, 15453, 25512}"
+      ]
+     },
+     "execution_count": 7,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "positive_item_dict[400]"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 8,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "400      9029\n",
+       "5619     7814\n",
+       "26467    7742\n",
+       "24490    7061\n",
+       "20489    6865\n",
+       "         ... \n",
+       "5040     1218\n",
+       "13378    1215\n",
+       "1615     1208\n",
+       "11234    1203\n",
+       "34511    1197\n",
+       "Name: item_id, Length: 100, dtype: int64"
+      ]
+     },
+     "execution_count": 8,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "training['item_id'].value_counts()[:100]"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 9,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "all_itemIds = set(training['item_id'].unique())\n",
+    "# finding top N common items in the entire training sample\n",
+    "most_common_items = set(training['item_id'].value_counts()[:200].index)\n",
+    "\n",
+    "uncommon_items = all_itemIds - most_common_items"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 10,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import random\n",
+    "def find_negatives_items_id(df, user_id):\n",
+    "    #items ids user interacted are considered as positives\n",
+    "    item_ids_Interacted = positive_item_dict[user_id]\n",
+    "    all_negative_items_id = list(uncommon_items - item_ids_Interacted)\n",
+    "    negative_items_id = random.sample(all_negative_items_id, 3*len(item_ids_Interacted))\n",
+    "    return negative_items_id"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 11,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "from tqdm.notebook import tqdm"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 12,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "application/vnd.jupyter.widget-view+json": {
+       "model_id": "5452d08ac1aa42478624ed109c18a792",
+       "version_major": 2,
+       "version_minor": 0
+      },
+      "text/plain": [
+       "  0%|          | 0/169698 [00:00<?, ?it/s]"
+      ]
+     },
+     "metadata": {},
+     "output_type": "display_data"
+    }
+   ],
+   "source": [
+    "## creating a dictionary with user as key and negative_items_id list as value\n",
+    "all_UserIds = training['user_id'].unique()\n",
+    "negative_samples_dict = {}\n",
+    "for user in tqdm(all_UserIds):\n",
+    "    negative_items_id = find_negatives_items_id(training, user) ## getting the list of negative items\n",
+    "    negative_samples_dict[user] = negative_items_id ## building a dictionary"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 13,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "([31615,\n",
+       "  2471,\n",
+       "  1560,\n",
+       "  16800,\n",
+       "  33708,\n",
+       "  5014,\n",
+       "  32999,\n",
+       "  5017,\n",
+       "  13011,\n",
+       "  21032,\n",
+       "  37734,\n",
+       "  19369,\n",
+       "  386,\n",
+       "  9731,\n",
+       "  1587],\n",
+       " {2714, 10126, 12225, 15453, 25512})"
+      ]
+     },
+     "execution_count": 13,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "negative_samples_dict[400], positive_item_dict[400]"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 14,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "<div>\n",
+       "<style scoped>\n",
+       "    .dataframe tbody tr th:only-of-type {\n",
+       "        vertical-align: middle;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe tbody tr th {\n",
+       "        vertical-align: top;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe thead th {\n",
+       "        text-align: right;\n",
+       "    }\n",
+       "</style>\n",
+       "<table border=\"1\" class=\"dataframe\">\n",
+       "  <thead>\n",
+       "    <tr style=\"text-align: right;\">\n",
+       "      <th></th>\n",
+       "      <th>user_id</th>\n",
+       "      <th>item_id</th>\n",
+       "      <th>rating</th>\n",
+       "    </tr>\n",
+       "  </thead>\n",
+       "  <tbody>\n",
+       "    <tr>\n",
+       "      <th>0</th>\n",
+       "      <td>0</td>\n",
+       "      <td>28366</td>\n",
+       "      <td>1</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>1</th>\n",
+       "      <td>0</td>\n",
+       "      <td>16109</td>\n",
+       "      <td>1</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>2</th>\n",
+       "      <td>0</td>\n",
+       "      <td>11500</td>\n",
+       "      <td>1</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>3</th>\n",
+       "      <td>0</td>\n",
+       "      <td>20750</td>\n",
+       "      <td>1</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>4</th>\n",
+       "      <td>0</td>\n",
+       "      <td>8759</td>\n",
+       "      <td>1</td>\n",
+       "    </tr>\n",
+       "  </tbody>\n",
+       "</table>\n",
+       "</div>"
+      ],
+      "text/plain": [
+       "   user_id  item_id  rating\n",
+       "0        0    28366       1\n",
+       "1        0    16109       1\n",
+       "2        0    11500       1\n",
+       "3        0    20750       1\n",
+       "4        0     8759       1"
+      ]
+     },
+     "execution_count": 14,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "# rating = 1 for all the interacted items\n",
+    "training['rating'] = 1\n",
+    "training.head(5)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 15,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "<div>\n",
+       "<style scoped>\n",
+       "    .dataframe tbody tr th:only-of-type {\n",
+       "        vertical-align: middle;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe tbody tr th {\n",
+       "        vertical-align: top;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe thead th {\n",
+       "        text-align: right;\n",
+       "    }\n",
+       "</style>\n",
+       "<table border=\"1\" class=\"dataframe\">\n",
+       "  <thead>\n",
+       "    <tr style=\"text-align: right;\">\n",
+       "      <th></th>\n",
+       "      <th>user_id</th>\n",
+       "      <th>item_id</th>\n",
+       "      <th>rating</th>\n",
+       "    </tr>\n",
+       "  </thead>\n",
+       "  <tbody>\n",
+       "    <tr>\n",
+       "      <th>0</th>\n",
+       "      <td>0</td>\n",
+       "      <td>33362</td>\n",
+       "      <td>0</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>1</th>\n",
+       "      <td>0</td>\n",
+       "      <td>30298</td>\n",
+       "      <td>0</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>2</th>\n",
+       "      <td>0</td>\n",
+       "      <td>11949</td>\n",
+       "      <td>0</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>3</th>\n",
+       "      <td>0</td>\n",
+       "      <td>7430</td>\n",
+       "      <td>0</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>4</th>\n",
+       "      <td>0</td>\n",
+       "      <td>27646</td>\n",
+       "      <td>0</td>\n",
+       "    </tr>\n",
+       "  </tbody>\n",
+       "</table>\n",
+       "</div>"
+      ],
+      "text/plain": [
+       "   user_id  item_id  rating\n",
+       "0        0    33362       0\n",
+       "1        0    30298       0\n",
+       "2        0    11949       0\n",
+       "3        0     7430       0\n",
+       "4        0    27646       0"
+      ]
+     },
+     "execution_count": 15,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "# converting the dictionary value list as rows of dataframe \n",
+    "neg_samples_df = pd.DataFrame(dict([(k,pd.Series(v)) for k,v in negative_samples_dict.items()])).melt().dropna()\n",
+    "neg_samples_df.rename(columns={'variable': 'user_id', 'value': 'item_id'}, inplace = True)\n",
+    "neg_samples_df['item_id'] = pd.to_numeric(neg_samples_df['item_id'], downcast='integer')\n",
+    "neg_samples_df['rating'] = 0 ## giving negative samples as 0 probability\n",
+    "neg_samples_df.head(5)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 16,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "<div>\n",
+       "<style scoped>\n",
+       "    .dataframe tbody tr th:only-of-type {\n",
+       "        vertical-align: middle;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe tbody tr th {\n",
+       "        vertical-align: top;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe thead th {\n",
+       "        text-align: right;\n",
+       "    }\n",
+       "</style>\n",
+       "<table border=\"1\" class=\"dataframe\">\n",
+       "  <thead>\n",
+       "    <tr style=\"text-align: right;\">\n",
+       "      <th></th>\n",
+       "      <th>user_id</th>\n",
+       "      <th>item_id</th>\n",
+       "      <th>rating</th>\n",
+       "    </tr>\n",
+       "  </thead>\n",
+       "  <tbody>\n",
+       "    <tr>\n",
+       "      <th>2695720</th>\n",
+       "      <td>133063</td>\n",
+       "      <td>9073</td>\n",
+       "      <td>0</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>2283566</th>\n",
+       "      <td>101295</td>\n",
+       "      <td>39726</td>\n",
+       "      <td>0</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>2024006</th>\n",
+       "      <td>81351</td>\n",
+       "      <td>36982</td>\n",
+       "      <td>0</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>140308</th>\n",
+       "      <td>29039</td>\n",
+       "      <td>36860</td>\n",
+       "      <td>1</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>1149123</th>\n",
+       "      <td>13950</td>\n",
+       "      <td>10640</td>\n",
+       "      <td>0</td>\n",
+       "    </tr>\n",
+       "  </tbody>\n",
+       "</table>\n",
+       "</div>"
+      ],
+      "text/plain": [
+       "         user_id  item_id  rating\n",
+       "2695720   133063     9073       0\n",
+       "2283566   101295    39726       0\n",
+       "2024006    81351    36982       0\n",
+       "140308     29039    36860       1\n",
+       "1149123    13950    10640       0"
+      ]
+     },
+     "execution_count": 16,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "# adding negative samples to the training dataframe\n",
+    "new_train = training.append(neg_samples_df, ignore_index=True)\n",
+    "new_train.sample(5)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 17,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "(3559224, 3)"
+      ]
+     },
+     "execution_count": 17,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "new_train.shape"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# Splitting the dataset into Train and validation dataset"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 18,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "from sklearn.model_selection import train_test_split\n",
+    "random_state = 3\n",
+    "train, val = train_test_split(new_train, test_size=0.2, random_state = random_state, shuffle=True,stratify=new_train['rating'])"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 19,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "((2847379, 3), (711845, 3))"
+      ]
+     },
+     "execution_count": 19,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "train.shape, val.shape"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 20,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "<div>\n",
+       "<style scoped>\n",
+       "    .dataframe tbody tr th:only-of-type {\n",
+       "        vertical-align: middle;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe tbody tr th {\n",
+       "        vertical-align: top;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe thead th {\n",
+       "        text-align: right;\n",
+       "    }\n",
+       "</style>\n",
+       "<table border=\"1\" class=\"dataframe\">\n",
+       "  <thead>\n",
+       "    <tr style=\"text-align: right;\">\n",
+       "      <th></th>\n",
+       "      <th>user_id</th>\n",
+       "      <th>item_id</th>\n",
+       "      <th>rating</th>\n",
+       "    </tr>\n",
+       "  </thead>\n",
+       "  <tbody>\n",
+       "    <tr>\n",
+       "      <th>2456213</th>\n",
+       "      <td>114608</td>\n",
+       "      <td>35320</td>\n",
+       "      <td>0</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>609890</th>\n",
+       "      <td>125596</td>\n",
+       "      <td>4168</td>\n",
+       "      <td>1</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>33195</th>\n",
+       "      <td>6881</td>\n",
+       "      <td>26467</td>\n",
+       "      <td>1</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>1916619</th>\n",
+       "      <td>72993</td>\n",
+       "      <td>29708</td>\n",
+       "      <td>0</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>1635103</th>\n",
+       "      <td>51342</td>\n",
+       "      <td>9290</td>\n",
+       "      <td>0</td>\n",
+       "    </tr>\n",
+       "  </tbody>\n",
+       "</table>\n",
+       "</div>"
+      ],
+      "text/plain": [
+       "         user_id  item_id  rating\n",
+       "2456213   114608    35320       0\n",
+       "609890    125596     4168       1\n",
+       "33195       6881    26467       1\n",
+       "1916619    72993    29708       0\n",
+       "1635103    51342     9290       0"
+      ]
+     },
+     "execution_count": 20,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "val.head(5)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# Encode Data"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 26,
+   "metadata": {},
+   "outputs": [
+    {
+     "ename": "NameError",
+     "evalue": "name 'encode_data' is not defined",
+     "output_type": "error",
+     "traceback": [
+      "\u001b[0;31m---------------------------------------------------------------------------\u001b[0m",
+      "\u001b[0;31mNameError\u001b[0m                                 Traceback (most recent call last)",
+      "\u001b[0;32m/var/folders/wr/04n1ndk53zq3dpz2z6t8gsp80000gn/T/ipykernel_83389/1605696859.py\u001b[0m in \u001b[0;36m<module>\u001b[0;34m\u001b[0m\n\u001b[0;32m----> 1\u001b[0;31m \u001b[0mtrain_df\u001b[0m \u001b[0;34m=\u001b[0m \u001b[0mencode_data\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0mtrain\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mtrain\u001b[0m\u001b[0;34m=\u001b[0m\u001b[0;32mNone\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[0m\u001b[1;32m      2\u001b[0m \u001b[0mvalid_df\u001b[0m \u001b[0;34m=\u001b[0m \u001b[0mencode_data\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0mval\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mtrain\u001b[0m\u001b[0;34m=\u001b[0m\u001b[0mtrain\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n",
+      "\u001b[0;31mNameError\u001b[0m: name 'encode_data' is not defined"
+     ]
+    }
+   ],
+   "source": [
+    "# train_df = encode_data(train, train=None)\n",
+    "# valid_df = encode_data(val, train=train)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 24,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "((1466590, 3), (363683, 3))"
+      ]
+     },
+     "execution_count": 24,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "# train_df.shape, valid_df.shape"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 25,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "<div>\n",
+       "<style scoped>\n",
+       "    .dataframe tbody tr th:only-of-type {\n",
+       "        vertical-align: middle;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe tbody tr th {\n",
+       "        vertical-align: top;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe thead th {\n",
+       "        text-align: right;\n",
+       "    }\n",
+       "</style>\n",
+       "<table border=\"1\" class=\"dataframe\">\n",
+       "  <thead>\n",
+       "    <tr style=\"text-align: right;\">\n",
+       "      <th></th>\n",
+       "      <th>user_id</th>\n",
+       "      <th>item_id</th>\n",
+       "      <th>ratings</th>\n",
+       "    </tr>\n",
+       "  </thead>\n",
+       "  <tbody>\n",
+       "    <tr>\n",
+       "      <th>508033</th>\n",
+       "      <td>156241</td>\n",
+       "      <td>6830</td>\n",
+       "      <td>1</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>127832</th>\n",
+       "      <td>47293</td>\n",
+       "      <td>345</td>\n",
+       "      <td>1</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>1281046</th>\n",
+       "      <td>45700</td>\n",
+       "      <td>3</td>\n",
+       "      <td>0</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>1479798</th>\n",
+       "      <td>69455</td>\n",
+       "      <td>15</td>\n",
+       "      <td>0</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>1767456</th>\n",
+       "      <td>133266</td>\n",
+       "      <td>13</td>\n",
+       "      <td>0</td>\n",
+       "    </tr>\n",
+       "  </tbody>\n",
+       "</table>\n",
+       "</div>"
+      ],
+      "text/plain": [
+       "         user_id  item_id  ratings\n",
+       "508033    156241     6830        1\n",
+       "127832     47293      345        1\n",
+       "1281046    45700        3        0\n",
+       "1479798    69455       15        0\n",
+       "1767456   133266       13        0"
+      ]
+     },
+     "execution_count": 25,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "valid_df.head()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 26,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "<div>\n",
+       "<style scoped>\n",
+       "    .dataframe tbody tr th:only-of-type {\n",
+       "        vertical-align: middle;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe tbody tr th {\n",
+       "        vertical-align: top;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe thead th {\n",
+       "        text-align: right;\n",
+       "    }\n",
+       "</style>\n",
+       "<table border=\"1\" class=\"dataframe\">\n",
+       "  <thead>\n",
+       "    <tr style=\"text-align: right;\">\n",
+       "      <th></th>\n",
+       "      <th>user_id</th>\n",
+       "      <th>item_id</th>\n",
+       "      <th>ratings</th>\n",
+       "    </tr>\n",
+       "  </thead>\n",
+       "  <tbody>\n",
+       "    <tr>\n",
+       "      <th>1612372</th>\n",
+       "      <td>0</td>\n",
+       "      <td>0</td>\n",
+       "      <td>0</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>164577</th>\n",
+       "      <td>1</td>\n",
+       "      <td>1</td>\n",
+       "      <td>1</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>306174</th>\n",
+       "      <td>2</td>\n",
+       "      <td>2</td>\n",
+       "      <td>1</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>1039369</th>\n",
+       "      <td>3</td>\n",
+       "      <td>3</td>\n",
+       "      <td>0</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>873322</th>\n",
+       "      <td>4</td>\n",
+       "      <td>4</td>\n",
+       "      <td>1</td>\n",
+       "    </tr>\n",
+       "  </tbody>\n",
+       "</table>\n",
+       "</div>"
+      ],
+      "text/plain": [
+       "         user_id  item_id  ratings\n",
+       "1612372        0        0        0\n",
+       "164577         1        1        1\n",
+       "306174         2        2        1\n",
+       "1039369        3        3        0\n",
+       "873322         4        4        1"
+      ]
+     },
+     "execution_count": 26,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "# train_df.head()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# num_users = max(list(train.user_id.values))\n",
+    "# num_items = max(list(train.item_id.values))\n",
+    "# cold_start_users = list(set(range(0,num_users)) - set(train.user_id.values))\n",
+    "# cold_start_items = list(set(range(0,num_items)) - set(train.item_id.values))\n",
+    "# len(cold_start_users), len(cold_start_items)\n",
+    "\n",
+    "# train_users = list(train.user_id.values)\n",
+    "# all_users = train_users + cold_start_users\n",
+    "# len(all_users)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 27,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "((1466590, 3), (363683, 3))"
+      ]
+     },
+     "execution_count": 27,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "# train_df.shape, valid_df.shape"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "6AhnrlNw7G90"
+   },
+   "source": [
+    "# Model"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 21,
+   "metadata": {
+    "id": "AG7II_pqxW6q"
+   },
+   "outputs": [],
+   "source": [
+    "class MF(nn.Module):\n",
+    "    def __init__(self, num_users, num_items, emb_size=100):\n",
+    "        super(MF, self).__init__()\n",
+    "        self.user_emb = nn.Embedding(num_users, emb_size)\n",
+    "        self.user_bias = nn.Embedding(num_users, 1)\n",
+    "        self.item_emb = nn.Embedding(num_items, emb_size)\n",
+    "        self.item_bias = nn.Embedding(num_items, 1)\n",
+    "        # init \n",
+    "        self.user_emb.weight.data.uniform_(0,0.05)\n",
+    "        self.item_emb.weight.data.uniform_(0,0.05)\n",
+    "        self.user_bias.weight.data.uniform_(-0.01,0.01)\n",
+    "        self.item_bias.weight.data.uniform_(-0.01,0.01)\n",
+    "\n",
+    "    def forward(self, u, v):\n",
+    "        ### BEGIN SOLUTION\n",
+    "        U = self.user_emb(u)\n",
+    "        V = self.item_emb(v)\n",
+    "        b_u = self.user_bias(u).squeeze()\n",
+    "        b_v = self.item_bias(v).squeeze()\n",
+    "        return torch.sigmoid((U*V).sum(1) +  b_u  + b_v)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# Training the model on train dataset"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 22,
+   "metadata": {
+    "id": "VW9-XH421ig1"
+   },
+   "outputs": [],
+   "source": [
+    "def train_one_epoch(model, train_df, optimizer):\n",
+    "    \n",
+    "    ###\"\"\" Trains the model for one epoch\"\"\"\n",
+    "    model.train()\n",
+    "    ### BEGIN SOLUTION\n",
+    "    # here we are not using data loaders because our data fits well in memory\n",
+    "    users = torch.LongTensor(train_df.user_id.values)  #.cuda()\n",
+    "    items = torch.LongTensor(train_df.item_id.values) #.cuda()\n",
+    "    ratings = torch.FloatTensor(train_df.rating.values)  #.cuda()\n",
+    "\n",
+    "    y_hat = model(users, items)\n",
+    "    loss = F.binary_cross_entropy(y_hat, ratings)\n",
+    "    optimizer.zero_grad()\n",
+    "    loss.backward()\n",
+    "    optimizer.step() \n",
+    "    train_loss = loss.item()\n",
+    "    ### END SOLUTION\n",
+    "    return train_loss\n",
+    "\n",
+    "def valid_metrics(model, valid_df):\n",
+    "    ###\"\"\"Computes validation loss and accuracy\"\"\"\n",
+    "    model.eval()\n",
+    "    ### BEGIN SOLUTION\n",
+    "    users = torch.LongTensor(valid_df.user_id.values) # .cuda()\n",
+    "    items = torch.LongTensor(valid_df.item_id.values) #.cuda()\n",
+    "    ratings = torch.FloatTensor(valid_df.rating.values) #.cuda()\n",
+    "    y_hat = model(users, items)\n",
+    "    loss = F.binary_cross_entropy(y_hat, ratings)\n",
+    "    valid_loss = loss.item()\n",
+    "    y_pred = (y_hat>0.5).float()\n",
+    "    valid_acc = torch.sum(y_pred == ratings) / len(valid_df)\n",
+    "    ### END SOLUTION\n",
+    "    return valid_loss, valid_acc.item()\n",
+    "\n",
+    "def training_loop(model, train_df, valid_df, epochs=10, lr=0.01, wd=0.0):\n",
+    "    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=wd)\n",
+    "    for i in range(epochs):\n",
+    "        train_loss = train_one_epoch(model, train_df, optimizer)\n",
+    "        valid_loss, valid_acc = valid_metrics(model, valid_df) \n",
+    "        print(\"train loss %.3f valid loss %.3f valid acc %.3f\" % (train_loss, valid_loss, valid_acc)) "
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "### Initiating the model to create user_embedding and item_embedding"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 23,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# num_users = len(train.user_id.unique())\n",
+    "# num_items = len(train.item_id.unique())\n",
+    "num_users = max(list(train.user_id.values)) + 1\n",
+    "num_items = max(list(train.item_id.values)) + 1\n",
+    "num_users, num_items\n",
+    "model = MF(num_users, num_items, emb_size=100) #.cuda()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Training with train dataset and validating with val dataset"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 24,
+   "metadata": {
+    "colab": {
+     "base_uri": "https://localhost:8080/",
+     "height": 206
+    },
+    "id": "nHJu5WP91yPJ",
+    "outputId": "7dcf53d1-7a4f-488b-cb34-2c3c5960aee9"
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "train loss 0.708 valid loss 0.885 valid acc 0.107\n",
+      "train loss 0.885 valid loss 0.612 valid acc 0.747\n",
+      "train loss 0.607 valid loss 0.579 valid acc 0.876\n",
+      "train loss 0.571 valid loss 0.611 valid acc 0.827\n",
+      "train loss 0.600 valid loss 0.562 valid acc 0.872\n",
+      "train loss 0.550 valid loss 0.501 valid acc 0.895\n",
+      "train loss 0.489 valid loss 0.482 valid acc 0.895\n",
+      "train loss 0.471 valid loss 0.491 valid acc 0.895\n",
+      "train loss 0.481 valid loss 0.489 valid acc 0.895\n",
+      "train loss 0.482 valid loss 0.465 valid acc 0.895\n",
+      "train loss 0.459 valid loss 0.440 valid acc 0.896\n",
+      "train loss 0.435 valid loss 0.431 valid acc 0.897\n",
+      "train loss 0.425 valid loss 0.434 valid acc 0.897\n",
+      "train loss 0.428 valid loss 0.438 valid acc 0.897\n",
+      "train loss 0.432 valid loss 0.435 valid acc 0.897\n",
+      "train loss 0.428 valid loss 0.428 valid acc 0.897\n",
+      "train loss 0.420 valid loss 0.426 valid acc 0.897\n",
+      "train loss 0.418 valid loss 0.431 valid acc 0.897\n",
+      "train loss 0.422 valid loss 0.438 valid acc 0.897\n",
+      "train loss 0.429 valid loss 0.443 valid acc 0.897\n"
+     ]
+    }
+   ],
+   "source": [
+    "training_loop(model, train, val, epochs=20, lr=0.1, wd = 1e-5)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "### Hyperparameter Tuning"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 25,
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "train loss 0.704 valid loss 0.815 valid acc 0.107\n",
+      "train loss 0.815 valid loss 0.607 valid acc 0.751\n",
+      "train loss 0.602 valid loss 0.573 valid acc 0.881\n",
+      "train loss 0.565 valid loss 0.589 valid acc 0.853\n",
+      "train loss 0.578 valid loss 0.548 valid acc 0.884\n",
+      "train loss 0.536 valid loss 0.499 valid acc 0.895\n",
+      "train loss 0.488 valid loss 0.482 valid acc 0.895\n",
+      "train loss 0.471 valid loss 0.486 valid acc 0.895\n",
+      "train loss 0.477 valid loss 0.481 valid acc 0.895\n",
+      "train loss 0.474 valid loss 0.461 valid acc 0.895\n",
+      "train loss 0.455 valid loss 0.440 valid acc 0.896\n",
+      "train loss 0.435 valid loss 0.431 valid acc 0.897\n",
+      "train loss 0.426 valid loss 0.433 valid acc 0.897\n",
+      "train loss 0.427 valid loss 0.435 valid acc 0.897\n",
+      "train loss 0.429 valid loss 0.433 valid acc 0.897\n",
+      "train loss 0.425 valid loss 0.428 valid acc 0.897\n",
+      "train loss 0.420 valid loss 0.428 valid acc 0.897\n",
+      "train loss 0.419 valid loss 0.433 valid acc 0.897\n",
+      "train loss 0.423 valid loss 0.439 valid acc 0.897\n",
+      "train loss 0.430 valid loss 0.443 valid acc 0.897\n"
+     ]
+    }
+   ],
+   "source": [
+    "model = MF(num_users, num_items, emb_size=75) #.cuda()\n",
+    "training_loop(model, train, val, epochs=20, lr=0.1, wd = 1e-5)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 29,
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "train loss 0.704 valid loss 0.815 valid acc 0.107\n",
+      "train loss 0.815 valid loss 0.607 valid acc 0.751\n",
+      "train loss 0.602 valid loss 0.573 valid acc 0.881\n",
+      "train loss 0.565 valid loss 0.590 valid acc 0.853\n",
+      "train loss 0.579 valid loss 0.548 valid acc 0.884\n",
+      "train loss 0.536 valid loss 0.499 valid acc 0.895\n",
+      "train loss 0.488 valid loss 0.482 valid acc 0.895\n",
+      "train loss 0.471 valid loss 0.486 valid acc 0.895\n",
+      "train loss 0.477 valid loss 0.481 valid acc 0.895\n",
+      "train loss 0.474 valid loss 0.461 valid acc 0.895\n",
+      "train loss 0.455 valid loss 0.440 valid acc 0.896\n",
+      "train loss 0.435 valid loss 0.431 valid acc 0.897\n",
+      "train loss 0.426 valid loss 0.433 valid acc 0.897\n",
+      "train loss 0.427 valid loss 0.435 valid acc 0.897\n",
+      "train loss 0.429 valid loss 0.433 valid acc 0.897\n"
+     ]
+    }
+   ],
+   "source": [
+    "model = MF(num_users, num_items, emb_size=75) #.cuda()\n",
+    "training_loop(model, train, val, epochs=15, lr=0.1, wd = 1e-5)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# Training the dataset on complete training dataset"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 30,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "def full_training_loop(model, train_df, epochs=10, lr=0.01, wd=0.0):\n",
+    "    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=wd)\n",
+    "    for i in range(epochs):\n",
+    "        train_loss = train_one_epoch(model, train_df, optimizer)\n",
+    "        print(\"train loss %.3f\" % (train_loss)) "
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 31,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "<div>\n",
+       "<style scoped>\n",
+       "    .dataframe tbody tr th:only-of-type {\n",
+       "        vertical-align: middle;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe tbody tr th {\n",
+       "        vertical-align: top;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe thead th {\n",
+       "        text-align: right;\n",
+       "    }\n",
+       "</style>\n",
+       "<table border=\"1\" class=\"dataframe\">\n",
+       "  <thead>\n",
+       "    <tr style=\"text-align: right;\">\n",
+       "      <th></th>\n",
+       "      <th>id</th>\n",
+       "      <th>user_id</th>\n",
+       "      <th>item_id</th>\n",
+       "      <th>context_feature_id</th>\n",
+       "    </tr>\n",
+       "  </thead>\n",
+       "  <tbody>\n",
+       "    <tr>\n",
+       "      <th>0</th>\n",
+       "      <td>0</td>\n",
+       "      <td>4</td>\n",
+       "      <td>16835</td>\n",
+       "      <td>2</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>1</th>\n",
+       "      <td>1</td>\n",
+       "      <td>4</td>\n",
+       "      <td>22590</td>\n",
+       "      <td>3</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>2</th>\n",
+       "      <td>2</td>\n",
+       "      <td>4</td>\n",
+       "      <td>1978</td>\n",
+       "      <td>1</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>3</th>\n",
+       "      <td>3</td>\n",
+       "      <td>4</td>\n",
+       "      <td>28916</td>\n",
+       "      <td>1</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>4</th>\n",
+       "      <td>4</td>\n",
+       "      <td>4</td>\n",
+       "      <td>14427</td>\n",
+       "      <td>2</td>\n",
+       "    </tr>\n",
+       "  </tbody>\n",
+       "</table>\n",
+       "</div>"
+      ],
+      "text/plain": [
+       "   id  user_id  item_id  context_feature_id\n",
+       "0   0        4    16835                   2\n",
+       "1   1        4    22590                   3\n",
+       "2   2        4     1978                   1\n",
+       "3   3        4    28916                   1\n",
+       "4   4        4    14427                   2"
+      ]
+     },
+     "execution_count": 31,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "test = pd.read_csv('data/test_kaggle.csv')\n",
+    "test.head()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 32,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# test_enriched = test.join(item_feature, on='item_id',rsuffix='_other')\n",
+    "# test_enriched = test_enriched.drop(columns=['context_feature_id','item_id_other'])\n",
+    "# test_enriched"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 33,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "162260"
+      ]
+     },
+     "execution_count": 33,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "len(set(new_train.user_id.unique()) - set(test.user_id.unique()))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 34,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# full_train = encode_data(new_train, train=None)\n",
+    "# test = encode_data(test, train=new_train)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 35,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "(381385, 4)"
+      ]
+     },
+     "execution_count": 35,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "test.shape"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 36,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "<div>\n",
+       "<style scoped>\n",
+       "    .dataframe tbody tr th:only-of-type {\n",
+       "        vertical-align: middle;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe tbody tr th {\n",
+       "        vertical-align: top;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe thead th {\n",
+       "        text-align: right;\n",
+       "    }\n",
+       "</style>\n",
+       "<table border=\"1\" class=\"dataframe\">\n",
+       "  <thead>\n",
+       "    <tr style=\"text-align: right;\">\n",
+       "      <th></th>\n",
+       "      <th>id</th>\n",
+       "      <th>user_id</th>\n",
+       "      <th>item_id</th>\n",
+       "      <th>context_feature_id</th>\n",
+       "    </tr>\n",
+       "  </thead>\n",
+       "  <tbody>\n",
+       "    <tr>\n",
+       "      <th>0</th>\n",
+       "      <td>0</td>\n",
+       "      <td>4</td>\n",
+       "      <td>16835</td>\n",
+       "      <td>2</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>1</th>\n",
+       "      <td>1</td>\n",
+       "      <td>4</td>\n",
+       "      <td>22590</td>\n",
+       "      <td>3</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>2</th>\n",
+       "      <td>2</td>\n",
+       "      <td>4</td>\n",
+       "      <td>1978</td>\n",
+       "      <td>1</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>3</th>\n",
+       "      <td>3</td>\n",
+       "      <td>4</td>\n",
+       "      <td>28916</td>\n",
+       "      <td>1</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>4</th>\n",
+       "      <td>4</td>\n",
+       "      <td>4</td>\n",
+       "      <td>14427</td>\n",
+       "      <td>2</td>\n",
+       "    </tr>\n",
+       "  </tbody>\n",
+       "</table>\n",
+       "</div>"
+      ],
+      "text/plain": [
+       "   id  user_id  item_id  context_feature_id\n",
+       "0   0        4    16835                   2\n",
+       "1   1        4    22590                   3\n",
+       "2   2        4     1978                   1\n",
+       "3   3        4    28916                   1\n",
+       "4   4        4    14427                   2"
+      ]
+     },
+     "execution_count": 36,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "test.head()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 37,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "num_users = max(list(new_train.user_id.values)) + 1\n",
+    "num_items = max(list(new_train.item_id.values)) + 1\n",
+    "num_users, num_items\n",
+    "model = MF(num_users, num_items, emb_size=75) #.cuda()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 38,
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "train loss 0.708\n",
+      "train loss 0.885\n",
+      "train loss 0.607\n",
+      "train loss 0.571\n",
+      "train loss 0.602\n",
+      "train loss 0.552\n",
+      "train loss 0.491\n",
+      "train loss 0.473\n",
+      "train loss 0.483\n",
+      "train loss 0.483\n",
+      "train loss 0.461\n",
+      "train loss 0.436\n",
+      "train loss 0.426\n",
+      "train loss 0.428\n",
+      "train loss 0.432\n"
+     ]
+    }
+   ],
+   "source": [
+    "full_training_loop(model, new_train, epochs=15, lr=0.1, wd = 1e-5)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## Prediction on test_dataset"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 39,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "test_ids = torch.LongTensor(test.id.values)\n",
+    "test_users = torch.LongTensor(test.user_id.values) # .cuda()\n",
+    "test_items = torch.LongTensor(test.item_id.values) #.cuda()\n",
+    "test_y_hat = model(test_users, test_items)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 40,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "(381385, tensor(209466.5625, grad_fn=<SumBackward0>))"
+      ]
+     },
+     "execution_count": 40,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "len(test_y_hat), torch.sum(test_y_hat)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 41,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "<div>\n",
+       "<style scoped>\n",
+       "    .dataframe tbody tr th:only-of-type {\n",
+       "        vertical-align: middle;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe tbody tr th {\n",
+       "        vertical-align: top;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe thead th {\n",
+       "        text-align: right;\n",
+       "    }\n",
+       "</style>\n",
+       "<table border=\"1\" class=\"dataframe\">\n",
+       "  <thead>\n",
+       "    <tr style=\"text-align: right;\">\n",
+       "      <th></th>\n",
+       "      <th>id</th>\n",
+       "      <th>rating</th>\n",
+       "    </tr>\n",
+       "  </thead>\n",
+       "  <tbody>\n",
+       "    <tr>\n",
+       "      <th>0</th>\n",
+       "      <td>0</td>\n",
+       "      <td>0.526908</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>1</th>\n",
+       "      <td>1</td>\n",
+       "      <td>0.389862</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>2</th>\n",
+       "      <td>2</td>\n",
+       "      <td>0.783997</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>3</th>\n",
+       "      <td>3</td>\n",
+       "      <td>0.350769</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>4</th>\n",
+       "      <td>4</td>\n",
+       "      <td>0.346013</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>...</th>\n",
+       "      <td>...</td>\n",
+       "      <td>...</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>381380</th>\n",
+       "      <td>381380</td>\n",
+       "      <td>0.719796</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>381381</th>\n",
+       "      <td>381381</td>\n",
+       "      <td>0.796214</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>381382</th>\n",
+       "      <td>381382</td>\n",
+       "      <td>0.785645</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>381383</th>\n",
+       "      <td>381383</td>\n",
+       "      <td>0.785645</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>381384</th>\n",
+       "      <td>381384</td>\n",
+       "      <td>0.345548</td>\n",
+       "    </tr>\n",
+       "  </tbody>\n",
+       "</table>\n",
+       "<p>381385 rows × 2 columns</p>\n",
+       "</div>"
+      ],
+      "text/plain": [
+       "            id    rating\n",
+       "0            0  0.526908\n",
+       "1            1  0.389862\n",
+       "2            2  0.783997\n",
+       "3            3  0.350769\n",
+       "4            4  0.346013\n",
+       "...        ...       ...\n",
+       "381380  381380  0.719796\n",
+       "381381  381381  0.796214\n",
+       "381382  381382  0.785645\n",
+       "381383  381383  0.785645\n",
+       "381384  381384  0.345548\n",
+       "\n",
+       "[381385 rows x 2 columns]"
+      ]
+     },
+     "execution_count": 41,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "d = {'id':test_ids,'rating':test_y_hat.detach().numpy()}\n",
+    "test_knownUsers_df = pd.DataFrame(d)\n",
+    "test_knownUsers_df"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": []
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 42,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "#test_knownUsers_df.to_csv('submission5.csv', index=False)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 45,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "sub1 = pd.read_csv('submission4.csv')\n",
+    "ensemble = test_knownUsers_df.append(sub1)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 48,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "ensemble.groupby(['id']).mean().to_csv('submission6.csv')"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "### ROUGH"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "<div>\n",
+       "<style scoped>\n",
+       "    .dataframe tbody tr th:only-of-type {\n",
+       "        vertical-align: middle;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe tbody tr th {\n",
+       "        vertical-align: top;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe thead th {\n",
+       "        text-align: right;\n",
+       "    }\n",
+       "</style>\n",
+       "<table border=\"1\" class=\"dataframe\">\n",
+       "  <thead>\n",
+       "    <tr style=\"text-align: right;\">\n",
+       "      <th></th>\n",
+       "      <th>item_id</th>\n",
+       "      <th>item_feature_id</th>\n",
+       "    </tr>\n",
+       "  </thead>\n",
+       "  <tbody>\n",
+       "    <tr>\n",
+       "      <th>0</th>\n",
+       "      <td>0</td>\n",
+       "      <td>139</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>1</th>\n",
+       "      <td>1</td>\n",
+       "      <td>55</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>2</th>\n",
+       "      <td>2</td>\n",
+       "      <td>11</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>3</th>\n",
+       "      <td>3</td>\n",
+       "      <td>138</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>4</th>\n",
+       "      <td>4</td>\n",
+       "      <td>138</td>\n",
+       "    </tr>\n",
+       "  </tbody>\n",
+       "</table>\n",
+       "</div>"
+      ],
+      "text/plain": [
+       "   item_id  item_feature_id\n",
+       "0        0              139\n",
+       "1        1               55\n",
+       "2        2               11\n",
+       "3        3              138\n",
+       "4        4              138"
+      ]
+     },
+     "execution_count": 82,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "item_feature.head()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "(39901, 195)"
+      ]
+     },
+     "execution_count": 86,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "item_feature.item_id.nunique(), item_feature.item_feature_id.nunique()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "37978"
+      ]
+     },
+     "execution_count": 85,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "training.item_id.nunique()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "item_feature_id\n",
+       "0         4\n",
+       "1      1975\n",
+       "2       473\n",
+       "3       117\n",
+       "4       232\n",
+       "       ... \n",
+       "190       1\n",
+       "191       8\n",
+       "192      23\n",
+       "193       1\n",
+       "194      44\n",
+       "Length: 195, dtype: int64"
+      ]
+     },
+     "execution_count": 93,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "item_feature.groupby('item_feature_id').apply(lambda x : x.item_id.nunique())"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "<div>\n",
+       "<style scoped>\n",
+       "    .dataframe tbody tr th:only-of-type {\n",
+       "        vertical-align: middle;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe tbody tr th {\n",
+       "        vertical-align: top;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe thead th {\n",
+       "        text-align: right;\n",
+       "    }\n",
+       "</style>\n",
+       "<table border=\"1\" class=\"dataframe\">\n",
+       "  <thead>\n",
+       "    <tr style=\"text-align: right;\">\n",
+       "      <th></th>\n",
+       "      <th>item_id</th>\n",
+       "      <th>item_feature_id</th>\n",
+       "    </tr>\n",
+       "  </thead>\n",
+       "  <tbody>\n",
+       "    <tr>\n",
+       "      <th>11</th>\n",
+       "      <td>11</td>\n",
+       "      <td>1</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>37</th>\n",
+       "      <td>37</td>\n",
+       "      <td>1</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>42</th>\n",
+       "      <td>42</td>\n",
+       "      <td>1</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>68</th>\n",
+       "      <td>68</td>\n",
+       "      <td>1</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>70</th>\n",
+       "      <td>70</td>\n",
+       "      <td>1</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>...</th>\n",
+       "      <td>...</td>\n",
+       "      <td>...</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>39820</th>\n",
+       "      <td>39820</td>\n",
+       "      <td>1</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>39827</th>\n",
+       "      <td>39827</td>\n",
+       "      <td>1</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>39837</th>\n",
+       "      <td>39837</td>\n",
+       "      <td>1</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>39855</th>\n",
+       "      <td>39855</td>\n",
+       "      <td>1</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>39856</th>\n",
+       "      <td>39856</td>\n",
+       "      <td>1</td>\n",
+       "    </tr>\n",
+       "  </tbody>\n",
+       "</table>\n",
+       "<p>1975 rows × 2 columns</p>\n",
+       "</div>"
+      ],
+      "text/plain": [
+       "       item_id  item_feature_id\n",
+       "11          11                1\n",
+       "37          37                1\n",
+       "42          42                1\n",
+       "68          68                1\n",
+       "70          70                1\n",
+       "...        ...              ...\n",
+       "39820    39820                1\n",
+       "39827    39827                1\n",
+       "39837    39837                1\n",
+       "39855    39855                1\n",
+       "39856    39856                1\n",
+       "\n",
+       "[1975 rows x 2 columns]"
+      ]
+     },
+     "execution_count": 95,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "item_feature[item_feature.item_feature_id == 1]"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "<div>\n",
+       "<style scoped>\n",
+       "    .dataframe tbody tr th:only-of-type {\n",
+       "        vertical-align: middle;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe tbody tr th {\n",
+       "        vertical-align: top;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe thead th {\n",
+       "        text-align: right;\n",
+       "    }\n",
+       "</style>\n",
+       "<table border=\"1\" class=\"dataframe\">\n",
+       "  <thead>\n",
+       "    <tr style=\"text-align: right;\">\n",
+       "      <th></th>\n",
+       "      <th>user_id</th>\n",
+       "      <th>item_id</th>\n",
+       "      <th>context_feature_id</th>\n",
+       "    </tr>\n",
+       "  </thead>\n",
+       "  <tbody>\n",
+       "    <tr>\n",
+       "      <th>0</th>\n",
+       "      <td>0</td>\n",
+       "      <td>28366</td>\n",
+       "      <td>2</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>1</th>\n",
+       "      <td>0</td>\n",
+       "      <td>16109</td>\n",
+       "      <td>2</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>2</th>\n",
+       "      <td>0</td>\n",
+       "      <td>11500</td>\n",
+       "      <td>3</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>3</th>\n",
+       "      <td>0</td>\n",
+       "      <td>20750</td>\n",
+       "      <td>2</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>4</th>\n",
+       "      <td>0</td>\n",
+       "      <td>8759</td>\n",
+       "      <td>2</td>\n",
+       "    </tr>\n",
+       "  </tbody>\n",
+       "</table>\n",
+       "</div>"
+      ],
+      "text/plain": [
+       "   user_id  item_id  context_feature_id\n",
+       "0        0    28366                   2\n",
+       "1        0    16109                   2\n",
+       "2        0    11500                   3\n",
+       "3        0    20750                   2\n",
+       "4        0     8759                   2"
+      ]
+     },
+     "execution_count": 42,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "train_ = pd.read_csv('data/training.csv')\n",
+    "train_.head()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "2    485857\n",
+       "1    270187\n",
+       "3    145267\n",
+       "0     68934\n",
+       "Name: context_feature_id, dtype: int64"
+      ]
+     },
+     "execution_count": 97,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "train_.context_feature_id.value_counts()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "context_feature_id  user_id\n",
+       "0                   19         3\n",
+       "                    20         1\n",
+       "                    33         2\n",
+       "                    36         4\n",
+       "                    57         2\n",
+       "                              ..\n",
+       "3                   200144     1\n",
+       "                    200145     2\n",
+       "                    200147     1\n",
+       "                    200148     1\n",
+       "                    200149     2\n",
+       "Length: 308116, dtype: int64"
+      ]
+     },
+     "execution_count": 106,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "train_.groupby(['context_feature_id','user_id']).apply(lambda x : x.item_id.nunique())"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "37978"
+      ]
+     },
+     "execution_count": 43,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "train_.item_id.nunique()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/html": [
+       "<div>\n",
+       "<style scoped>\n",
+       "    .dataframe tbody tr th:only-of-type {\n",
+       "        vertical-align: middle;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe tbody tr th {\n",
+       "        vertical-align: top;\n",
+       "    }\n",
+       "\n",
+       "    .dataframe thead th {\n",
+       "        text-align: right;\n",
+       "    }\n",
+       "</style>\n",
+       "<table border=\"1\" class=\"dataframe\">\n",
+       "  <thead>\n",
+       "    <tr style=\"text-align: right;\">\n",
+       "      <th></th>\n",
+       "      <th>id</th>\n",
+       "      <th>user_id</th>\n",
+       "      <th>item_id</th>\n",
+       "      <th>context_feature_id</th>\n",
+       "    </tr>\n",
+       "  </thead>\n",
+       "  <tbody>\n",
+       "    <tr>\n",
+       "      <th>0</th>\n",
+       "      <td>0</td>\n",
+       "      <td>4</td>\n",
+       "      <td>16835</td>\n",
+       "      <td>2</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>1</th>\n",
+       "      <td>1</td>\n",
+       "      <td>4</td>\n",
+       "      <td>22590</td>\n",
+       "      <td>3</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>2</th>\n",
+       "      <td>2</td>\n",
+       "      <td>4</td>\n",
+       "      <td>1978</td>\n",
+       "      <td>1</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>3</th>\n",
+       "      <td>3</td>\n",
+       "      <td>4</td>\n",
+       "      <td>28916</td>\n",
+       "      <td>1</td>\n",
+       "    </tr>\n",
+       "    <tr>\n",
+       "      <th>4</th>\n",
+       "      <td>4</td>\n",
+       "      <td>4</td>\n",
+       "      <td>14427</td>\n",
+       "      <td>2</td>\n",
+       "    </tr>\n",
+       "  </tbody>\n",
+       "</table>\n",
+       "</div>"
+      ],
+      "text/plain": [
+       "   id  user_id  item_id  context_feature_id\n",
+       "0   0        4    16835                   2\n",
+       "1   1        4    22590                   3\n",
+       "2   2        4     1978                   1\n",
+       "3   3        4    28916                   1\n",
+       "4   4        4    14427                   2"
+      ]
+     },
+     "execution_count": 107,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "test_ = pd.read_csv('data/test_kaggle.csv')\n",
+    "test_.head()"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 115,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "37893"
+      ]
+     },
+     "execution_count": 115,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "len(set(train_.user_id.values) and set(test_.user_id.values))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 116,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "14586"
+      ]
+     },
+     "execution_count": 116,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "len(set(train_.item_id.values) and set(test_.item_id.values))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 31,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "input = torch.randn((3, 2), requires_grad=True)\n",
+    "target = torch.rand((3, 2), requires_grad=False)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 32,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "tensor([[ 0.4441, -1.2997],\n",
+       "        [-2.4803,  0.1225],\n",
+       "        [-0.1670,  0.5042]], requires_grad=True)"
+      ]
+     },
+     "execution_count": 32,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "input"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 33,
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "tensor([[0.5945, 0.8495],\n",
+       "        [0.0957, 0.1396],\n",
+       "        [0.0967, 0.4963]])"
+      ]
+     },
+     "execution_count": 33,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "target"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": []
+  }
+ ],
+ "metadata": {
+  "colab": {
+   "collapsed_sections": [],
+   "name": "Kaggle_Competition.ipynb",
+   "provenance": []
+  },
+  "kernelspec": {
+   "display_name": "Python 3 (ipykernel)",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.8.12"
+  },
+  "widgets": {
+   "application/vnd.jupyter.widget-state+json": {
+    "2c80a6e5f31540538f9e687432e8aea0": {
+     "model_module": "@jupyter-widgets/controls",
+     "model_module_version": "1.5.0",
+     "model_name": "DescriptionStyleModel",
+     "state": {
+      "_model_module": "@jupyter-widgets/controls",
+      "_model_module_version": "1.5.0",
+      "_model_name": "DescriptionStyleModel",
+      "_view_count": null,
+      "_view_module": "@jupyter-widgets/base",
+      "_view_module_version": "1.2.0",
+      "_view_name": "StyleView",
+      "description_width": ""
+     }
+    },
+    "30d174f74b324674a723f4f590cb505b": {
+     "model_module": "@jupyter-widgets/controls",
+     "model_module_version": "1.5.0",
+     "model_name": "HTMLModel",
+     "state": {
+      "_dom_classes": [],
+      "_model_module": "@jupyter-widgets/controls",
+      "_model_module_version": "1.5.0",
+      "_model_name": "HTMLModel",
+      "_view_count": null,
+      "_view_module": "@jupyter-widgets/controls",
+      "_view_module_version": "1.5.0",
+      "_view_name": "HTMLView",
+      "description": "",
+      "description_tooltip": null,
+      "layout": "IPY_MODEL_4d3fe87dfb524622ad1f1de59ba4f582",
+      "placeholder": "​",
+      "style": "IPY_MODEL_9ded39a6b93f414281f024a8f689ef76",
+      "value": "100%"
+     }
+    },
+    "42332ab9eafa46a9a68a7a07d6a2be4b": {
+     "model_module": "@jupyter-widgets/controls",
+     "model_module_version": "1.5.0",
+     "model_name": "HTMLModel",
+     "state": {
+      "_dom_classes": [],
+      "_model_module": "@jupyter-widgets/controls",
+      "_model_module_version": "1.5.0",
+      "_model_name": "HTMLModel",
+      "_view_count": null,
+      "_view_module": "@jupyter-widgets/controls",
+      "_view_module_version": "1.5.0",
+      "_view_name": "HTMLView",
+      "description": "",
+      "description_tooltip": null,
+      "layout": "IPY_MODEL_dfe33732f96f4831bc15363a5630f1ef",
+      "placeholder": "​",
+      "style": "IPY_MODEL_2c80a6e5f31540538f9e687432e8aea0",
+      "value": " 703511/703511 [00:29&lt;00:00, 25017.05it/s]"
+     }
+    },
+    "4d3fe87dfb524622ad1f1de59ba4f582": {
+     "model_module": "@jupyter-widgets/base",
+     "model_module_version": "1.2.0",
+     "model_name": "LayoutModel",
+     "state": {
+      "_model_module": "@jupyter-widgets/base",
+      "_model_module_version": "1.2.0",
+      "_model_name": "LayoutModel",
+      "_view_count": null,
+      "_view_module": "@jupyter-widgets/base",
+      "_view_module_version": "1.2.0",
+      "_view_name": "LayoutView",
+      "align_content": null,
+      "align_items": null,
+      "align_self": null,
+      "border": null,
+      "bottom": null,
+      "display": null,
+      "flex": null,
+      "flex_flow": null,
+      "grid_area": null,
+      "grid_auto_columns": null,
+      "grid_auto_flow": null,
+      "grid_auto_rows": null,
+      "grid_column": null,
+      "grid_gap": null,
+      "grid_row": null,
+      "grid_template_areas": null,
+      "grid_template_columns": null,
+      "grid_template_rows": null,
+      "height": null,
+      "justify_content": null,
+      "justify_items": null,
+      "left": null,
+      "margin": null,
+      "max_height": null,
+      "max_width": null,
+      "min_height": null,
+      "min_width": null,
+      "object_fit": null,
+      "object_position": null,
+      "order": null,
+      "overflow": null,
+      "overflow_x": null,
+      "overflow_y": null,
+      "padding": null,
+      "right": null,
+      "top": null,
+      "visibility": null,
+      "width": null
+     }
+    },
+    "7f3affdf91c3442880ebe31559377f03": {
+     "model_module": "@jupyter-widgets/controls",
+     "model_module_version": "1.5.0",
+     "model_name": "FloatProgressModel",
+     "state": {
+      "_dom_classes": [],
+      "_model_module": "@jupyter-widgets/controls",
+      "_model_module_version": "1.5.0",
+      "_model_name": "FloatProgressModel",
+      "_view_count": null,
+      "_view_module": "@jupyter-widgets/controls",
+      "_view_module_version": "1.5.0",
+      "_view_name": "ProgressView",
+      "bar_style": "success",
+      "description": "",
+      "description_tooltip": null,
+      "layout": "IPY_MODEL_e76fc14ac4474c0eb17df26124efee4c",
+      "max": 703511,
+      "min": 0,
+      "orientation": "horizontal",
+      "style": "IPY_MODEL_dcd46d22050f44b8870f75845b8a8b1d",
+      "value": 703511
+     }
+    },
+    "9ded39a6b93f414281f024a8f689ef76": {
+     "model_module": "@jupyter-widgets/controls",
+     "model_module_version": "1.5.0",
+     "model_name": "DescriptionStyleModel",
+     "state": {
+      "_model_module": "@jupyter-widgets/controls",
+      "_model_module_version": "1.5.0",
+      "_model_name": "DescriptionStyleModel",
+      "_view_count": null,
+      "_view_module": "@jupyter-widgets/base",
+      "_view_module_version": "1.2.0",
+      "_view_name": "StyleView",
+      "description_width": ""
+     }
+    },
+    "b3004421e9f14850acb3ac3a38c564f8": {
+     "model_module": "@jupyter-widgets/base",
+     "model_module_version": "1.2.0",
+     "model_name": "LayoutModel",
+     "state": {
+      "_model_module": "@jupyter-widgets/base",
+      "_model_module_version": "1.2.0",
+      "_model_name": "LayoutModel",
+      "_view_count": null,
+      "_view_module": "@jupyter-widgets/base",
+      "_view_module_version": "1.2.0",
+      "_view_name": "LayoutView",
+      "align_content": null,
+      "align_items": null,
+      "align_self": null,
+      "border": null,
+      "bottom": null,
+      "display": null,
+      "flex": null,
+      "flex_flow": null,
+      "grid_area": null,
+      "grid_auto_columns": null,
+      "grid_auto_flow": null,
+      "grid_auto_rows": null,
+      "grid_column": null,
+      "grid_gap": null,
+      "grid_row": null,
+      "grid_template_areas": null,
+      "grid_template_columns": null,
+      "grid_template_rows": null,
+      "height": null,
+      "justify_content": null,
+      "justify_items": null,
+      "left": null,
+      "margin": null,
+      "max_height": null,
+      "max_width": null,
+      "min_height": null,
+      "min_width": null,
+      "object_fit": null,
+      "object_position": null,
+      "order": null,
+      "overflow": null,
+      "overflow_x": null,
+      "overflow_y": null,
+      "padding": null,
+      "right": null,
+      "top": null,
+      "visibility": null,
+      "width": null
+     }
+    },
+    "dcd46d22050f44b8870f75845b8a8b1d": {
+     "model_module": "@jupyter-widgets/controls",
+     "model_module_version": "1.5.0",
+     "model_name": "ProgressStyleModel",
+     "state": {
+      "_model_module": "@jupyter-widgets/controls",
+      "_model_module_version": "1.5.0",
+      "_model_name": "ProgressStyleModel",
+      "_view_count": null,
+      "_view_module": "@jupyter-widgets/base",
+      "_view_module_version": "1.2.0",
+      "_view_name": "StyleView",
+      "bar_color": null,
+      "description_width": ""
+     }
+    },
+    "dfe33732f96f4831bc15363a5630f1ef": {
+     "model_module": "@jupyter-widgets/base",
+     "model_module_version": "1.2.0",
+     "model_name": "LayoutModel",
+     "state": {
+      "_model_module": "@jupyter-widgets/base",
+      "_model_module_version": "1.2.0",
+      "_model_name": "LayoutModel",
+      "_view_count": null,
+      "_view_module": "@jupyter-widgets/base",
+      "_view_module_version": "1.2.0",
+      "_view_name": "LayoutView",
+      "align_content": null,
+      "align_items": null,
+      "align_self": null,
+      "border": null,
+      "bottom": null,
+      "display": null,
+      "flex": null,
+      "flex_flow": null,
+      "grid_area": null,
+      "grid_auto_columns": null,
+      "grid_auto_flow": null,
+      "grid_auto_rows": null,
+      "grid_column": null,
+      "grid_gap": null,
+      "grid_row": null,
+      "grid_template_areas": null,
+      "grid_template_columns": null,
+      "grid_template_rows": null,
+      "height": null,
+      "justify_content": null,
+      "justify_items": null,
+      "left": null,
+      "margin": null,
+      "max_height": null,
+      "max_width": null,
+      "min_height": null,
+      "min_width": null,
+      "object_fit": null,
+      "object_position": null,
+      "order": null,
+      "overflow": null,
+      "overflow_x": null,
+      "overflow_y": null,
+      "padding": null,
+      "right": null,
+      "top": null,
+      "visibility": null,
+      "width": null
+     }
+    },
+    "e76fc14ac4474c0eb17df26124efee4c": {
+     "model_module": "@jupyter-widgets/base",
+     "model_module_version": "1.2.0",
+     "model_name": "LayoutModel",
+     "state": {
+      "_model_module": "@jupyter-widgets/base",
+      "_model_module_version": "1.2.0",
+      "_model_name": "LayoutModel",
+      "_view_count": null,
+      "_view_module": "@jupyter-widgets/base",
+      "_view_module_version": "1.2.0",
+      "_view_name": "LayoutView",
+      "align_content": null,
+      "align_items": null,
+      "align_self": null,
+      "border": null,
+      "bottom": null,
+      "display": null,
+      "flex": null,
+      "flex_flow": null,
+      "grid_area": null,
+      "grid_auto_columns": null,
+      "grid_auto_flow": null,
+      "grid_auto_rows": null,
+      "grid_column": null,
+      "grid_gap": null,
+      "grid_row": null,
+      "grid_template_areas": null,
+      "grid_template_columns": null,
+      "grid_template_rows": null,
+      "height": null,
+      "justify_content": null,
+      "justify_items": null,
+      "left": null,
+      "margin": null,
+      "max_height": null,
+      "max_width": null,
+      "min_height": null,
+      "min_width": null,
+      "object_fit": null,
+      "object_position": null,
+      "order": null,
+      "overflow": null,
+      "overflow_x": null,
+      "overflow_y": null,
+      "padding": null,
+      "right": null,
+      "top": null,
+      "visibility": null,
+      "width": null
+     }
+    },
+    "ea5ae6904fe74afab9446fcd8fab9bce": {
+     "model_module": "@jupyter-widgets/controls",
+     "model_module_version": "1.5.0",
+     "model_name": "HBoxModel",
+     "state": {
+      "_dom_classes": [],
+      "_model_module": "@jupyter-widgets/controls",
+      "_model_module_version": "1.5.0",
+      "_model_name": "HBoxModel",
+      "_view_count": null,
+      "_view_module": "@jupyter-widgets/controls",
+      "_view_module_version": "1.5.0",
+      "_view_name": "HBoxView",
+      "box_style": "",
+      "children": [
+       "IPY_MODEL_30d174f74b324674a723f4f590cb505b",
+       "IPY_MODEL_7f3affdf91c3442880ebe31559377f03",
+       "IPY_MODEL_42332ab9eafa46a9a68a7a07d6a2be4b"
+      ],
+      "layout": "IPY_MODEL_b3004421e9f14850acb3ac3a38c564f8"
+     }
+    }
+   }
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 4
+}
